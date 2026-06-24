@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types as genai_types
 from PIL import Image
 
-# 🛡️ БЕЗОПАСНОСТЬ: Ключи берутся из скрытых настроек сервера (Environment Variables)
+# 🛡️ Переменные окружения со скрытыми ключами
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_API_KEY = os.getenv("GEMINI_KEY")
 
@@ -14,7 +14,8 @@ bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 ai_client = genai.Client(api_key=GOOGLE_API_KEY)
 
-user_languages, user_history, last_ai_response = {}, {}, {}
+# user_chats будет хранить объекты сессий чата от самого Google SDK
+user_languages, user_chats, last_ai_response = {}, {}, {}
 
 TEXTS = {
     'ru': {
@@ -49,31 +50,39 @@ def get_action_keyboard(l):
     b.button(text=TEXTS[l]['clear_btn'], callback_data="action_clear")
     return b.as_markup()
 
+def get_or_create_chat(uid, lang):
+    """Инициализирует или возвращает официальную сессию чата Gemini"""
+    if uid not in user_chats or user_chats[uid] is None:
+        user_chats[uid] = ai_client.chats.create(
+            model="gemini-1.5-flash",
+            config=genai_types.GenerateContentConfig(system_instruction=TEXTS[lang]['system'])
+        )
+    return user_chats[uid]
+
 @dp.message(CommandStart())
 async def start_cmd(m: types.Message):
     await m.answer("Choose language / Выберите язык:", reply_markup=get_lang_keyboard())
 
 @dp.callback_query(F.data.startswith('set_lang_'))
 async def process_language(c: types.CallbackQuery):
-    # Исправлено: получаем 'ru' или 'en' (последний элемент после сплита)
     l = c.data.split('_')[-1] 
     user_languages[c.from_user.id] = l
-    user_history[c.from_user.id] = []
+    # Сбрасываем старый чат при смене языка, чтобы создался новый с верным системным промптом
+    user_chats[c.from_user.id] = None 
     
-    await c.answer() # Исправлено: правильный метод гашения часиков на кнопке
+    await c.answer()
     await bot.send_message(c.from_user.id, TEXTS[l]['welcome'])
 
 @dp.callback_query(F.data.startswith('action_'))
 async def process_actions(c: types.CallbackQuery):
     uid = c.from_user.id
-    # Исправлено: получаем само действие ('simplify' или 'clear')
     act = c.data.split('_')[-1] 
     l = user_languages.get(uid, 'ru')
     
-    await c.answer() # Исправлено: правильный метод гашения часиков
+    await c.answer()
     
     if act == "clear":
-        user_history[uid], last_ai_response[uid] = [], ""
+        user_chats[uid], last_ai_response[uid] = None, ""
         await bot.send_message(uid, TEXTS[l]['clear_mem'])
     elif act == "simplify":
         txt = last_ai_response.get(uid, "")
@@ -83,23 +92,20 @@ async def process_actions(c: types.CallbackQuery):
         try:
             r = ai_client.models.generate_content(
                 model='gemini-1.5-flash', 
-                contents=f"Упрости этот текст для ребенка:\n\n{txt}", 
+                contents=f"Упрости этот текст для ребенка:\n\n{txt}",
                 config=genai_types.GenerateContentConfig(system_instruction=TEXTS[l]['system'])
             )
-            await bot.send_message(uid, f"{TEXTS[l]['simplified_title']}{r.text}", parse_mode="HTML") # HTML, так как в тегах <b>
+            await bot.send_message(uid, f"{TEXTS[l]['simplified_title']}{r.text}", parse_mode="HTML")
         except:
             await bot.send_message(uid, TEXTS[l]['error'])
-            
+
 @dp.message()
 async def handle_everything(m: types.Message):
     uid = m.from_user.id
     l = user_languages.get(uid, 'ru')
-    if uid not in user_history: 
-        user_history[uid] = []
     
     await bot.send_chat_action(chat_id=m.chat.id, action="typing")
 
-    # Исправлено: выровнены все отступы внутри функции
     contents = []
     prompt = m.caption if m.caption else m.text
     
@@ -119,20 +125,18 @@ async def handle_everything(m: types.Message):
         return
         
     contents.append(prompt)
-    user_history[uid].append({'role': 'user', 'parts': contents})
     
     try:
-        r = ai_client.models.generate_content(
-            model='gemini-1.5-flash', 
-            contents=user_history[uid], 
-            config=genai_types.GenerateContentConfig(system_instruction=TEXTS[l]['system'])
-        )
+        # Получаем сессию чата для пользователя и отправляем сообщение
+        chat = get_or_create_chat(uid, l)
+        
+        # Передаем массив данных (текст + опционально картинка) через официальный метод send_message
+        r = chat.send_message(contents)
+        
         last_ai_response[uid] = r.text
-        user_history[uid].append({'role': 'model', 'parts': [r.text]})
-        if len(user_history[uid]) > 10: 
-            user_history[uid] = user_history[uid][-10:]
         await m.answer(r.text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
-    except:
+    except Exception as e:
+        print(f"Ошибка Gemini API: {e}") # Выведет точную техническую ошибку в логи Render
         await m.answer(TEXTS[l]['error'])
 
 async def main():
