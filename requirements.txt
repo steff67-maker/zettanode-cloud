@@ -1,4 +1,4 @@
-google-genai
 aiogram
+google-genai
 pillow
 aiohttp
