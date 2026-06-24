@@ -55,24 +55,30 @@ async def start_cmd(m: types.Message):
 
 @dp.callback_query(F.data.startswith('set_lang_'))
 async def process_language(c: types.CallbackQuery):
-    l = c.data.split('_')
+    # Исправлено: получаем 'ru' или 'en' (последний элемент после сплита)
+    l = c.data.split('_')[-1] 
     user_languages[c.from_user.id] = l
     user_history[c.from_user.id] = []
-    await bot.answer_callback_query(c.id)
+    
+    await c.answer() # Исправлено: правильный метод гашения часиков на кнопке
     await bot.send_message(c.from_user.id, TEXTS[l]['welcome'])
 
 @dp.callback_query(F.data.startswith('action_'))
 async def process_actions(c: types.CallbackQuery):
     uid = c.from_user.id
-    act = c.data.split('_')
+    # Исправлено: получаем само действие ('simplify' или 'clear')
+    act = c.data.split('_')[-1] 
     l = user_languages.get(uid, 'ru')
-    await bot.answer_callback_query(c.id)
+    
+    await c.answer() # Исправлено: правильный метод гашения часиков
+    
     if act == "clear":
         user_history[uid], last_ai_response[uid] = [], ""
         await bot.send_message(uid, TEXTS[l]['clear_mem'])
     elif act == "simplify":
         txt = last_ai_response.get(uid, "")
-        if not txt: return
+        if not txt: 
+            return
         await bot.send_chat_action(chat_id=uid, action="typing")
         try:
             r = ai_client.models.generate_content(
@@ -80,31 +86,41 @@ async def process_actions(c: types.CallbackQuery):
                 contents=f"Упрости этот текст для ребенка:\n\n{txt}", 
                 config=genai_types.GenerateContentConfig(system_instruction=TEXTS[l]['system'])
             )
-            await bot.send_message(uid, f"{TEXTS[l]['simplified_title']}{r.text}", parse_mode="Markdown")
+            await bot.send_message(uid, f"{TEXTS[l]['simplified_title']}{r.text}", parse_mode="HTML") # HTML, так как в тегах <b>
         except:
             await bot.send_message(uid, TEXTS[l]['error'])
-
+            
 @dp.message()
 async def handle_everything(m: types.Message):
     uid = m.from_user.id
     l = user_languages.get(uid, 'ru')
-    if uid not in user_history: user_history[uid] = []
+    if uid not in user_history: 
+        user_history[uid] = []
+    
     await bot.send_chat_action(chat_id=m.chat.id, action="typing")
+
+    # Исправлено: выровнены все отступы внутри функции
     contents = []
     prompt = m.caption if m.caption else m.text
+    
     if m.photo:
         p = m.photo[-1]
         fi = await bot.get_file(p.file_id)
         fb = await bot.download_file(fi.file_path)
         contents.append(Image.open(io.BytesIO(fb.read())))
-        if not prompt: prompt = "Describe this image." if l == 'en' else "Что на фото?"
+        if not prompt: 
+            prompt = "Describe this image." if l == 'en' else "Что на фото?"
     elif m.document and m.document.mime_type == "text/plain":
         fi = await bot.get_file(m.document.file_id)
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
-    if not prompt: return
+        
+    if not prompt: 
+        return
+        
     contents.append(prompt)
     user_history[uid].append({'role': 'user', 'parts': contents})
+    
     try:
         r = ai_client.models.generate_content(
             model='gemini-1.5-flash', 
@@ -113,14 +129,14 @@ async def handle_everything(m: types.Message):
         )
         last_ai_response[uid] = r.text
         user_history[uid].append({'role': 'model', 'parts': [r.text]})
-        if len(user_history[uid]) > 10: user_history[uid] = user_history[uid][-10:]
+        if len(user_history[uid]) > 10: 
+            user_history[uid] = user_history[uid][-10:]
         await m.answer(r.text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
     except:
         await m.answer(TEXTS[l]['error'])
 
 async def main():
     print("Запуск мини веб-сервера для Render...")
-    from aiogram.webhook.aiohttp_server import setup_application
     from aiohttp import web
     app = web.Application()
     runner = web.AppRunner(app)
@@ -130,5 +146,5 @@ async def main():
     print("ZettaNode готов к работе!")
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+if name == "main":
     asyncio.run(main())
