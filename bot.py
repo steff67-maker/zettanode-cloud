@@ -8,11 +8,11 @@ from PIL import Image
 
 # 🛡️ Переменные окружения со скрытыми ключами
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
-GOOGLE_API_KEY = os.getenv("GEMINI_KEY")
+
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
-ai_client = genai.Client(api_key=GOOGLE_API_KEY)
+ai_client = genai.Client()
 
 # user_chats будет хранить объекты сессий чата от самого Google SDK
 user_languages, user_chats, last_ai_response = {}, {}, {}
