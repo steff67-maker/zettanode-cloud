@@ -1,4 +1,4 @@
-import io, os, asyncio, base64, requests
+import io, os, asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -7,7 +7,6 @@ from groq import Groq
 # 🛡️ Берём токены из настроек сервера
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
@@ -98,54 +97,18 @@ async def handle_everything(m: types.Message):
         
     await bot.send_chat_action(chat_id=m.chat.id, action="typing")
     prompt = m.caption if m.caption else m.text
-
-    # 1. Текстовые файлы (.txt)
+    
     if m.document and m.document.mime_type == "text/plain":
         fi = await bot.get_file(m.document.file_id)
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
-        
-    # 2. Обработка изображений через бесплатный Gemini
     elif m.photo:
-        try:
-            photo = m.photo[-1]
-            fi = await bot.get_file(photo.file_id)
-            fb = await bot.download_file(fi.file_path)
-            photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
-            
-            url = "https://generativelanguage" + "://" + str(GEMINI_API_KEY)
-            
-            payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": f"Ты ИИ ZettaNode. Отвечай глубоко и строго на русском языке. Запрос: {prompt if prompt else 'Что на фото? Опиши подробно.'}"},
-                        {
-                            "inlineData": {
-                                "mimeType": "image/jpeg",
-                                "data": photo_base64
-                            }
-                        }
-                    ]
-                }]
-            }
-            
-            res = requests.post(url, json=payload, timeout=30).json()
-            response_text = res['candidates'][0]['content']['parts'][0]['text']
-            
-            await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
-            return
-        except Exception as e:
-            await m.answer(f"{TEXTS[l]['error']}\n\nОшибка зрения: {str(e)}")
-            return
-
+        if not prompt: prompt = "Что на фото?" if l == 'ru' else "Describe the image."
+        
     if not prompt: 
         return
 
-    # 3. Обработка текстовых сообщений через Groq
     user_history[uid].append({"role": "user", "content": prompt})
-    if len(user_history[uid]) > 10: 
-        user_history[uid] = user_history[uid][-10:]
-        
     messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
     
     try:
@@ -153,13 +116,18 @@ async def handle_everything(m: types.Message):
             model=MODEL_NAME,
             messages=messages
         )
+        
         response_text = r.choices[0].message.content
         last_ai_response[uid] = response_text
         user_history[uid].append({"role": "assistant", "content": response_text})
         
+        if len(user_history[uid]) > 10: 
+            user_history[uid] = user_history[uid][-10:]
+            
         await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
     except Exception as e:
-        await m.answer(f"{TEXTS[l]['error']}\n\nОшибка Groq: {str(e)}")
+        print(f"Ошибка Groq API: {e}")
+        await m.answer(TEXTS[l]['error'])
 
 async def main():
     print("Запуск мини веб-сервера для Render...")
@@ -177,7 +145,7 @@ async def main():
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     
-    print(f"ZettaNode запущен на порту {port}!")
+    print(f"ZettaNode готов к работе!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
