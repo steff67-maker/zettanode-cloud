@@ -18,22 +18,22 @@ user_languages, user_history, last_ai_response = {}, {}, {}
 
 TEXTS = {
     'ru': {
-        'welcome': "✨ Система ZettaNode запущена на бесплатном облаке через Groq API!\n\nЗадай мне любой вопрос, пришли фото или .txt файл — я во всем разберусь!",
+        'welcome': "✨ Система ZettaNode запущена!\n\nЗадай мне любой вопрос, пришли фото или .txt файл — я во всем разберусь!",
         'error': "Произошла ошибка, попробуй еще раз.",
         'clear_mem': "🧹 Память ZettaNode успешно очищена!",
         'simplify_btn': "👶 Упростить ответ",
         'clear_btn': "🧹 Стереть память",
         'simplified_title': "<b>Простыми словами:</b>\n\n",
-        'system': "Ты — ZettaNode, продвинутый искусственный интеллект. Отвечай глубоко, экспертно и только на русском языке."
+        'system': "Ты — ZettaNode, понимающий и живой ИИ-помощник. Отвечай просто, с легким юмором, используй уместные эмодзи. Общайся на 'ты', как близкий друг, но оставайся умными и пиши только на русском языке."
     },
     'en': {
-        'welcome': "✨ ZettaNode system online on a free cloud server via Groq API!\n\nAsk me anything, send an image or a .txt file!",
+        'welcome': "✨ ZettaNode system online!\n\nAsk me anything, send an image or a .txt file!",
         'error': "An error occurred, please try again.",
         'clear_mem': "🧹 ZettaNode memory cleared successfully!",
         'simplify_btn': "👶 Simplify answer",
         'clear_btn': "🧹 Clear memory",
         'simplified_title': "<b>In simple terms:</b>\n\n",
-        'system': "You are ZettaNode, an advanced artificial intelligence. Provide deep and expert responses in English."
+        'system': "You are ZettaNode, an understanding and lively AI assistant. Answer simply, with a touch of humor, and use appropriate emojis. Communicate informally, like a close friend, but remain smart and write only in English."
     }
 }
 
