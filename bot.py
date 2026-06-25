@@ -146,13 +146,26 @@ async def handle_everything(m: types.Message):
 async def main():
     print("Запуск мини веб-сервера для Render...")
     from aiohttp import web
+    
     app = web.Application()
+    
+    # Добавляем ответ на проверку от Render
+    async def handle_ping(request):
+        return web.Response(text="OK", status=200)
+    app.router.add_get('/', handle_ping)
+    
+    # Берем порт, который требует Render
+    port = int(os.getenv("PORT", 10000))
+    
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 10000)
+    
+    # Запускаем на динамическом порту
+    site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print("ZettaNode готов к работе!")
+    
+    print(f"ZettaNode веб-сервер запущен на порту {port}!")
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+if name == "main":
     asyncio.run(main())
