@@ -114,25 +114,42 @@ async def handle_everything(m: types.Message):
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
         
-    # 2. Изображения
+    # 2. Изображения (используем бесплатный Gemini для зрения)
     elif m.photo:
-        # Возвращаем правильную официальную модель со зрением
-        current_model = "llama-3.2-90b-vision-preview"
         try:
+            import requests
             photo = m.photo[-1]
             fi = await bot.get_file(photo.file_id)
             fb = await bot.download_file(fi.file_path)
-            photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
+            
+            # Быстрый и надежный запрос к бесплатному API Gemini 1.5 Flash
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            url = f"https://googleapis.com{gemini_key}"
+            
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": f"Ты ИИ ZettaNode. Отвечай глубоко и строго на русском языке. Запрос: {prompt if prompt else 'Что на фото? Опиши подробно.'}"},
+                        {
+                            "inlineData": {
+                                "mimeType": "image/jpeg",
+                                "data": photo_base64
+                            }
+                        }
+                    ]
+                }]
+            }
+            
+            res = requests.post(url, json=payload, timeout=30).json()
+            response_text = res['candidates'][0]['content']['parts'][0]['text']
+            
+            await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
+            return  # Завершаем хэндлер, так как ответ уже отправлен через Gemini
+            
         except Exception as e:
-            print(f"Ошибка загрузки фото: {e}")
-            await m.answer(TEXTS[l]['error'])
+            print(f"Ошибка Gemini API: {e}")
+            await m.answer(f"{TEXTS[l]['error']} (Ошибка зрения: {str(e)[:50]})")
             return
-        
-        if not prompt: 
-            prompt = "Что на фото? Опиши подробно на русском."
-
-    if not prompt and not photo_base64: 
-        return
 
     # 3. Формированиеmessages строго по гайду Groq Vision
     if photo_base64:
