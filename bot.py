@@ -132,6 +132,7 @@ async def handle_everything(m: types.Message):
                 "contents": [{
                     "parts": [
                         {"text": f"Ты ИИ ZettaNode. Отвечай глубоко и строго на русском языке. Запрос: {prompt if prompt else 'Что на фото? Опиши подробно.'}"},
+                        {
                             "inlineData": {
                                 "mimeType": "image/jpeg",
                                 "data": photo_base64
