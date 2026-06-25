@@ -167,5 +167,5 @@ async def main():
     print(f"ZettaNode веб-сервер запущен на порту {port}!")
     await dp.start_polling(bot)
 
-if name == "main":
+if __name__ == "__main__":
     asyncio.run(main())
