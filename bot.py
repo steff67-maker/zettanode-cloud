@@ -153,11 +153,11 @@ async def handle_everything(m: types.Message):
     user_history[uid].append({"role": "user", "content": prompt if not photo_base64 else f"[Фото] {prompt}"})
     
     # Собираем контекст: Системный промпт + история (кроме последнего сообщения) + текущее сообщение с фото/текстом
-    messages = [{"role": "system", "content": TEXTS[l]['system']}]
-    for hist in user_history[uid][:-1]:
-        messages.append({"role": hist["role"], "content": hist["content"]})
-        
-    messages.append({"role": "user", "content": user_content})
+    # Формируем чистый запрос для модели
+    messages = [
+        {"role": "system", "content": TEXTS[l]['system']},
+        {"role": "user", "content": user_content}
+    ]
     
     try:
         # Запрос к API Groq с динамическим выбором модели
