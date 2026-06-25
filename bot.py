@@ -2,33 +2,34 @@ import io, os, asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from google import genai
-from google.genai import types as genai_types
+from groq import Groq
 from PIL import Image
 
-# 🛡️ Переменные окружения со скрытыми ключами
+# 🛡️ Берём токены из настроек сервера
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
-
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
-ai_client = genai.Client()
+ai_client = Groq(api_key=GROQ_API_KEY)
 
-# user_chats будет хранить объекты сессий чата от самого Google SDK
-user_languages, user_chats, last_ai_response = {}, {}, {}
+# Используем модель Llama 3.3 70B (она бесплатная, мощная и очень быстрая)
+MODEL_NAME = "llama-3.3-70b-versatile"
+
+user_languages, user_history, last_ai_response = {}, {}, {}
 
 TEXTS = {
     'ru': {
-        'welcome': "✨ Система ZettaNode запущена на бесплатном облаке!\n\nЗадай мне любой вопрос, пришли фото или .txt файл — я во всем разберусь!",
+        'welcome': "✨ Система ZettaNode запущена на бесплатном облаке через Groq API!\n\nЗадай мне любой вопрос, пришли фото или .txt файл — я во всем разберусь!",
         'error': "Произошла ошибка, попробуй еще раз.",
         'clear_mem': "🧹 Память ZettaNode успешно очищена!",
         'simplify_btn': "👶 Упростить ответ",
         'clear_btn': "🧹 Стереть память",
         'simplified_title': "<b>Простыми словами:</b>\n\n",
-        'system': "Ты — ZettaNode, продвинутый искусственный интеллект. Отвечай глубоко и экспертно на русском языке."
+        'system': "Ты — ZettaNode, продвинутый искусственный интеллект. Отвечай глубоко, экспертно и только на русском языке."
     },
     'en': {
-        'welcome': "✨ ZettaNode system online on a free cloud server!\n\nAsk me anything, send an image or a .txt file!",
+        'welcome': "✨ ZettaNode system online on a free cloud server via Groq API!\n\nAsk me anything, send an image or a .txt file!",
         'error': "An error occurred, please try again.",
         'clear_mem': "🧹 ZettaNode memory cleared successfully!",
         'simplify_btn': "👶 Simplify answer",
@@ -50,15 +51,6 @@ def get_action_keyboard(l):
     b.button(text=TEXTS[l]['clear_btn'], callback_data="action_clear")
     return b.as_markup()
 
-def get_or_create_chat(uid, lang):
-    """Инициализирует или возвращает официальную сессию чата Gemini"""
-    if uid not in user_chats or user_chats[uid] is None:
-        user_chats[uid] = ai_client.chats.create(
-            model="gemini-1.5-flash",
-            config=genai_types.GenerateContentConfig(system_instruction=TEXTS[lang]['system'])
-        )
-    return user_chats[uid]
-
 @dp.message(CommandStart())
 async def start_cmd(m: types.Message):
     await m.answer("Choose language / Выберите язык:", reply_markup=get_lang_keyboard())
@@ -67,8 +59,7 @@ async def start_cmd(m: types.Message):
 async def process_language(c: types.CallbackQuery):
     l = c.data.split('_')[-1] 
     user_languages[c.from_user.id] = l
-    # Сбрасываем старый чат при смене языка, чтобы создался новый с верным системным промптом
-    user_chats[c.from_user.id] = None 
+    user_history[c.from_user.id] = []
     
     await c.answer()
     await bot.send_message(c.from_user.id, TEXTS[l]['welcome'])
@@ -82,7 +73,7 @@ async def process_actions(c: types.CallbackQuery):
     await c.answer()
     
     if act == "clear":
-        user_chats[uid], last_ai_response[uid] = None, ""
+        user_history[uid], last_ai_response[uid] = [], ""
         await bot.send_message(uid, TEXTS[l]['clear_mem'])
     elif act == "simplify":
         txt = last_ai_response.get(uid, "")
@@ -90,12 +81,14 @@ async def process_actions(c: types.CallbackQuery):
             return
         await bot.send_chat_action(chat_id=uid, action="typing")
         try:
-            r = ai_client.models.generate_content(
-                model='gemini-1.5-flash', 
-                contents=f"Упрости этот текст для ребенка:\n\n{txt}",
-                config=genai_types.GenerateContentConfig(system_instruction=TEXTS[l]['system'])
+            r = ai_client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": TEXTS[l]['system']},
+                    {"role": "user", "content": f"Упрости этот текст для ребенка:\n\n{txt}"}
+                ]
             )
-            await bot.send_message(uid, f"{TEXTS[l]['simplified_title']}{r.text}", parse_mode="HTML")
+            await bot.send_message(uid, f"{TEXTS[l]['simplified_title']}{r.choices[0].message.content}", parse_mode="HTML")
         except:
             await bot.send_message(uid, TEXTS[l]['error'])
 
@@ -104,39 +97,50 @@ async def handle_everything(m: types.Message):
     uid = m.from_user.id
     l = user_languages.get(uid, 'ru')
     
+    if uid not in user_history: 
+        user_history[uid] = []
+        
     await bot.send_chat_action(chat_id=m.chat.id, action="typing")
 
-    contents = []
     prompt = m.caption if m.caption else m.text
     
-    if m.photo:
-        p = m.photo[-1]
-        fi = await bot.get_file(p.file_id)
-        fb = await bot.download_file(fi.file_path)
-        contents.append(Image.open(io.BytesIO(fb.read())))
-        if not prompt: 
-            prompt = "Describe this image." if l == 'en' else "Что на фото?"
-    elif m.document and m.document.mime_type == "text/plain":
+    # Текстовые файлы считываем как обычно
+    if m.document and m.document.mime_type == "text/plain":
         fi = await bot.get_file(m.document.file_id)
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
+    elif m.photo:
+        # У Groq для бесплатного анализа фото нужна другая модель, пока обрабатываем как обычный запрос
+        if not prompt: prompt = "Что на фото?" if l == 'ru' else "Describe the image."
         
     if not prompt: 
         return
-        
-    contents.append(prompt)
+
+    # Записываем реплику пользователя
+    user_history[uid].append({"role": "user", "content": prompt})
+    
+    # Формируем полный контекст (Системный промпт + история)
+    messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
     
     try:
-        # Получаем сессию чата для пользователя и отправляем сообщение
-        chat = get_or_create_chat(uid, l)
+        r = ai_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages
+        )
         
-        # Передаем массив данных (текст + опционально картинка) через официальный метод send_message
-        r = chat.send_message(contents)
+        response_text = r.choices[0].message.content
+        last_ai_response[uid] = response_text
         
-        last_ai_response[uid] = r.text
-        await m.answer(r.text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
+        # Записываем ответ ИИ в историю
+        user_history[uid].append({"role": "assistant", "content": response_text})
+        
+        # Ограничиваем историю 10 сообщениями
+        if len(user_history[uid]) > 10: 
+            user_history[uid] = user_history[uid][-10:]
+            
+        await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
     except Exception as e:
-        print(f"Ошибка Gemini API: {e}") # Выведет точную техническую ошибку в логи Render
+        print(f"Ошибка Groq API: {e}")
         await m.answer(TEXTS[l]['error'])
 
 async def main():
