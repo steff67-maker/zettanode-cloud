@@ -116,7 +116,8 @@ async def handle_everything(m: types.Message):
         
     # 2. Изображения
     elif m.photo:
-        current_model = "llama-v1.5-7b-4096-preview"
+        # Возвращаем правильную официальную модель со зрением
+        current_model = "llama-3.2-11b-vision-preview"
         try:
             photo = m.photo[-1]
             fi = await bot.get_file(photo.file_id)
@@ -128,21 +129,21 @@ async def handle_everything(m: types.Message):
             return
         
         if not prompt: 
-            prompt = "Что на фото? Опиши подробно."
+            prompt = "Что на фото? Опиши подробно на русском."
 
     if not prompt and not photo_base64: 
         return
 
-   # 3. Формирование messages строго по документации Groq Vision
+    # 3. Формированиеmessages строго по гайду Groq Vision
     if photo_base64:
-        # Объединяем системную инструкцию (отвечать на русском) и промпт в один текст для пользователя
-        full_prompt = f"{TEXTS[l]['system']}\n\nЗапрос пользователя: {prompt}"
-        
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": full_prompt},
+                    {
+                        "type": "text", 
+                        "text": f"Ты ИИ ZettaNode. Отвечай только на русском языке. Вопрос по картинке: {prompt}"
+                    },
                     {
                         "type": "image_url",
                         "image_url": {
@@ -157,13 +158,14 @@ async def handle_everything(m: types.Message):
         if len(user_history[uid]) > 10:
             user_history[uid] = user_history[uid][-10:]
         messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
+    
     try:
         r = ai_client.chat.completions.create(
             model=current_model,
             messages=messages
         )
         
-        response_text = r.choices[0].message.content
+        response_text = r.choices.message.content
         last_ai_response[uid] = response_text
         
         if not photo_base64:
@@ -172,8 +174,8 @@ async def handle_everything(m: types.Message):
         await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
     except Exception as e:
         print(f"Ошибка Groq API: {e}")
-        # Выводим ошибку пользователю, чтобы понять, на чем именно спотыкается сервер
-        await m.answer(f"{TEXTS[l]['error']} (Лог: {str(e)[:50]})")
+        # ВАЖНО: выводим ПОЛНУЮ ошибку без обрезания, чтобы увидеть причину
+        await m.answer(f"{TEXTS[l]['error']}\n\nПолный лог ошибки:\n{str(e)}")
 
 async def main():
     print("Запуск мини веб-сервера для Render...")
