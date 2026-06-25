@@ -106,61 +106,57 @@ async def handle_everything(m: types.Message):
 
     prompt = m.caption if m.caption else m.text
     photo_base64 = None
-    current_model = MODEL_NAME  # По умолчанию используем основную модель (llama-3.3-70b)
+    current_model = MODEL_NAME
 
-    # 1. Обработка текстовых файлов
+    # 1. Текстовые файлы
     if m.document and m.document.mime_type == "text/plain":
         fi = await bot.get_file(m.document.file_id)
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
         
-    # 2. Обработка изображений (ЗРЕНИЕ)
+    # 2. Изображения
     elif m.photo:
-        # Переключаемся на бесплатную модель со зрением
         current_model = "llama-3.2-11b-vision-preview"
-        
-        # Скачиваем фото в память
-        photo = m.photo[-1]  # Берем самое лучшее качество
-        fi = await bot.get_file(photo.file_id)
-        fb = await bot.download_file(fi.file_path)
-        
-        # Кодируем картинку в Base64 для передачи в Groq
-        photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
+        try:
+            photo = m.photo[-1]
+            fi = await bot.get_file(photo.file_id)
+            fb = await bot.download_file(fi.file_path)
+            photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
+        except Exception as e:
+            print(f"Ошибка загрузки фото: {e}")
+            await m.answer(TEXTS[l]['error'])
+            return
         
         if not prompt: 
-            prompt = "Что на фото? Опиши подробно на русском." if l == 'ru' else "Describe the image in detail."
+            prompt = "Что на фото? Опиши подробно."
 
-    if not prompt: 
+    if not prompt and not photo_base64: 
         return
 
-    # 3. Формируем структуру запроса для Groq
+    # 3. Формирование messages строго по документации Groq Vision
     if photo_base64:
-        # Для фото Groq требует специальный формат контента (текст + url с base64)
-        user_content = [
-            {"type": "text", "text": prompt},
+        messages = [
+            {"role": "system", "content": TEXTS[l]['system']},
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{photo_base64}"
-                }
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{photo_base64}"
+                        }
+                    }
+                ]
             }
         ]
     else:
-        # Для обычного текста оставляем стандартную строку
-        user_content = prompt
-
-    # Записываем реплику пользователя в историю (только текст, картинки в историю не пишем, чтобы не забивать память)
-    user_history[uid].append({"role": "user", "content": prompt if not photo_base64 else f"[Фото] {prompt}"})
-    
-    # Собираем контекст: Системный промпт + история (кроме последнего сообщения) + текущее сообщение с фото/текстом
-    # Формируем чистый запрос для модели
-    messages = [
-        {"role": "system", "content": TEXTS[l]['system']},
-        {"role": "user", "content": user_content}
-    ]
+        user_history[uid].append({"role": "user", "content": prompt})
+        if len(user_history[uid]) > 10:
+            user_history[uid] = user_history[uid][-10:]
+        messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
     
     try:
-        # Запрос к API Groq с динамическим выбором модели
         r = ai_client.chat.completions.create(
             model=current_model,
             messages=messages
@@ -169,17 +165,14 @@ async def handle_everything(m: types.Message):
         response_text = r.choices[0].message.content
         last_ai_response[uid] = response_text
         
-        # Записываем ответ ИИ в историю
-        user_history[uid].append({"role": "assistant", "content": response_text})
-        
-        # Ограничиваем историю
-        if len(user_history[uid]) > 10: 
-            user_history[uid] = user_history[uid][-10:]
+        if not photo_base64:
+            user_history[uid].append({"role": "assistant", "content": response_text})
             
         await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
     except Exception as e:
         print(f"Ошибка Groq API: {e}")
-        await m.answer(TEXTS[l]['error'])
+        # Выводим ошибку пользователю, чтобы понять, на чем именно спотыкается сервер
+        await m.answer(f"{TEXTS[l]['error']} (Лог: {str(e)[:50]})")
 
 async def main():
     print("Запуск мини веб-сервера для Render...")
