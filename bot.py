@@ -126,7 +126,7 @@ async def handle_everything(m: types.Message):
             photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
             
             gemini_key = os.getenv("GEMINI_API_KEY")
-            url = f"h t t p s : / / g e n e r a t i v e l a n g u a g e . g o o g l e a p i s . c o m / v 1 b e t a / m o d e l s / g e m i n i - 1 . 5 - f l a s h : g e n e r a t e C o n t e n t ? k e y ={gemini_key}"
+            url = "https://" + "generativelanguage." + "://googleapis.com" + gemini_key
             
             payload = {
                 "contents": [{
