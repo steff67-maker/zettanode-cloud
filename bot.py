@@ -144,8 +144,8 @@ async def handle_everything(m: types.Message):
             
             res = requests.post(url, json=payload, timeout=30).json()
             response_text = res['candidates'][0]['content']['parts'][0]['text']
-            
             await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
+            return
             
         except Exception as e:
             print(f"Ошибка Gemini API: {e}")
