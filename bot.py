@@ -114,7 +114,7 @@ async def handle_everything(m: types.Message):
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
         
-    # 2. Изображения (используем бесплатный Gemini для зрения)
+   # 2. Изображения (используем бесплатный Gemini для зрения)
     elif m.photo:
         try:
             import requests
@@ -122,7 +122,9 @@ async def handle_everything(m: types.Message):
             fi = await bot.get_file(photo.file_id)
             fb = await bot.download_file(fi.file_path)
             
-            # Быстрый и надежный запрос к бесплатному API Gemini 1.5 Flash
+            # Обязательно переводим картинку в Base64, иначе Google её не увидит
+            photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
+            
             gemini_key = os.getenv("GEMINI_API_KEY")
             url = f"https://googleapis.com{gemini_key}"
             
@@ -144,13 +146,12 @@ async def handle_everything(m: types.Message):
             response_text = res['candidates'][0]['content']['parts'][0]['text']
             
             await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
-            return  # Завершаем хэндлер, так как ответ уже отправлен через Gemini
+            return
             
         except Exception as e:
             print(f"Ошибка Gemini API: {e}")
-            await m.answer(f"{TEXTS[l]['error']} (Ошибка зрения: {str(e)[:50]})")
+            await m.answer(f"{TEXTS[l]['error']} (Ошибка зрения: {str(e)[:70]})")
             return
-
     # 3. Формированиеmessages строго по гайду Groq Vision
     if photo_base64:
         messages = [
