@@ -1,19 +1,18 @@
-import io, os, asyncio
+import io, os, asyncio, base64, requests
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from groq import Groq
-from PIL import Image
 
 # 🛡️ Берём токены из настроек сервера
 TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 ai_client = Groq(api_key=GROQ_API_KEY)
 
-# Используем модель Llama 3.3 70B (она бесплатная, мощная и очень быстрая)
 MODEL_NAME = "llama-3.3-70b-versatile"
 
 user_languages, user_history, last_ai_response = {}, {}, {}
@@ -60,7 +59,6 @@ async def process_language(c: types.CallbackQuery):
     l = c.data.split('_')[-1] 
     user_languages[c.from_user.id] = l
     user_history[c.from_user.id] = []
-    
     await c.answer()
     await bot.send_message(c.from_user.id, TEXTS[l]['welcome'])
 
@@ -69,7 +67,6 @@ async def process_actions(c: types.CallbackQuery):
     uid = c.from_user.id
     act = c.data.split('_')[-1] 
     l = user_languages.get(uid, 'ru')
-    
     await c.answer()
     
     if act == "clear":
@@ -77,8 +74,7 @@ async def process_actions(c: types.CallbackQuery):
         await bot.send_message(uid, TEXTS[l]['clear_mem'])
     elif act == "simplify":
         txt = last_ai_response.get(uid, "")
-        if not txt: 
-            return
+        if not txt: return
         await bot.send_chat_action(chat_id=uid, action="typing")
         try:
             r = ai_client.chat.completions.create(
@@ -92,8 +88,6 @@ async def process_actions(c: types.CallbackQuery):
         except:
             await bot.send_message(uid, TEXTS[l]['error'])
 
-import base64  # Добавьте этот импорт в самый верх файла, если его там нет
-
 @dp.message()
 async def handle_everything(m: types.Message):
     uid = m.from_user.id
@@ -103,30 +97,23 @@ async def handle_everything(m: types.Message):
         user_history[uid] = []
         
     await bot.send_chat_action(chat_id=m.chat.id, action="typing")
-
     prompt = m.caption if m.caption else m.text
-    photo_base64 = None
-    current_model = MODEL_NAME
 
-    # 1. Текстовые файлы
+    # 1. Текстовые файлы (.txt)
     if m.document and m.document.mime_type == "text/plain":
         fi = await bot.get_file(m.document.file_id)
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
         
-   # 2. Изображения (используем бесплатный Gemini для зрения)
+    # 2. Обработка изображений через бесплатный Gemini
     elif m.photo:
         try:
-            import requests
             photo = m.photo[-1]
             fi = await bot.get_file(photo.file_id)
             fb = await bot.download_file(fi.file_path)
-            
-            # Обязательно переводим картинку в Base64, иначе Google её не увидит
             photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
             
-            gemini_key = os.getenv("GEMINI_API_KEY")
-            url = "https://generativelanguage." + "://" + gemini_key
+            url = "https://generativelanguage" + "://" + str(GEMINI_API_KEY)
             
             payload = {
                 "contents": [{
@@ -144,78 +131,53 @@ async def handle_everything(m: types.Message):
             
             res = requests.post(url, json=payload, timeout=30).json()
             response_text = res['candidates'][0]['content']['parts'][0]['text']
+            
             await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
             return
-            
         except Exception as e:
-            print(f"Ошибка Gemini API: {e}")
-            await m.answer(f"{TEXTS[l]['error']} (Ошибка зрения: {str(e)[:70]})")
+            await m.answer(f"{TEXTS[l]['error']}\n\nОшибка зрения: {str(e)}")
             return
-    # 3. Формированиеmessages строго по гайду Groq Vision
-    if photo_base64:
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text", 
-                        "text": f"Ты ИИ ZettaNode. Отвечай только на русском языке. Вопрос по картинке: {prompt}"
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{photo_base64}"
-                        }
-                    }
-                ]
-            }
-        ]
-    else:
-        user_history[uid].append({"role": "user", "content": prompt})
-        if len(user_history[uid]) > 10:
-            user_history[uid] = user_history[uid][-10:]
-        messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
+
+    if not prompt: 
+        return
+
+    # 3. Обработка текстовых сообщений через Groq
+    user_history[uid].append({"role": "user", "content": prompt})
+    if len(user_history[uid]) > 10: 
+        user_history[uid] = user_history[uid][-10:]
+        
+    messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
     
     try:
         r = ai_client.chat.completions.create(
-            model=current_model,
+            model=MODEL_NAME,
             messages=messages
         )
-        
-        response_text = r.choices.message.content
+        response_text = r.choices[0].message.content
         last_ai_response[uid] = response_text
+        user_history[uid].append({"role": "assistant", "content": response_text})
         
-        if not photo_base64:
-            user_history[uid].append({"role": "assistant", "content": response_text})
-            
         await m.answer(response_text, parse_mode="Markdown", reply_markup=get_action_keyboard(l))
     except Exception as e:
-        print(f"Ошибка Groq API: {e}")
-        # ВАЖНО: выводим ПОЛНУЮ ошибку без обрезания, чтобы увидеть причину
-        await m.answer(f"{TEXTS[l]['error']}\n\nПолный лог ошибки:\n{str(e)}")
+        await m.answer(f"{TEXTS[l]['error']}\n\nОшибка Groq: {str(e)}")
 
 async def main():
     print("Запуск мини веб-сервера для Render...")
     from aiohttp import web
-    
     app = web.Application()
     
-    # Добавляем ответ на проверку от Render
     async def handle_ping(request):
         return web.Response(text="OK", status=200)
     app.router.add_get('/', handle_ping)
     
-    # Берем порт, который требует Render
     port = int(os.getenv("PORT", 10000))
-    
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Запускаем на динамическом порту
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     
-    print(f"ZettaNode веб-сервер запущен на порту {port}!")
+    print(f"ZettaNode запущен на порту {port}!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
