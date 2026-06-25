@@ -2,3 +2,4 @@ aiogram
 groq
 pillow
 aiohttp
+requests
