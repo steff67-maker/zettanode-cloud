@@ -133,14 +133,16 @@ async def handle_everything(m: types.Message):
     if not prompt and not photo_base64: 
         return
 
-    # 3. Формирование messages строго по документации Groq Vision
+   # 3. Формирование messages строго по документации Groq Vision
     if photo_base64:
+        # Объединяем системную инструкцию (отвечать на русском) и промпт в один текст для пользователя
+        full_prompt = f"{TEXTS[l]['system']}\n\nЗапрос пользователя: {prompt}"
+        
         messages = [
-            {"role": "system", "content": TEXTS[l]['system']},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": full_prompt},
                     {
                         "type": "image_url",
                         "image_url": {
@@ -155,7 +157,6 @@ async def handle_everything(m: types.Message):
         if len(user_history[uid]) > 10:
             user_history[uid] = user_history[uid][-10:]
         messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
-    
     try:
         r = ai_client.chat.completions.create(
             model=current_model,
