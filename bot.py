@@ -117,7 +117,7 @@ async def handle_everything(m: types.Message):
     # 2. Изображения
     elif m.photo:
         # Возвращаем правильную официальную модель со зрением
-        current_model = "llama-3.2-11b-vision-preview"
+        current_model = "llama-3.2-90b-vision-preview"
         try:
             photo = m.photo[-1]
             fi = await bot.get_file(photo.file_id)
