@@ -92,6 +92,8 @@ async def process_actions(c: types.CallbackQuery):
         except:
             await bot.send_message(uid, TEXTS[l]['error'])
 
+import base64  # Добавьте этот импорт в самый верх файла, если его там нет
+
 @dp.message()
 async def handle_everything(m: types.Message):
     uid = m.from_user.id
@@ -103,28 +105,64 @@ async def handle_everything(m: types.Message):
     await bot.send_chat_action(chat_id=m.chat.id, action="typing")
 
     prompt = m.caption if m.caption else m.text
-    
-    # Текстовые файлы считываем как обычно
+    photo_base64 = None
+    current_model = MODEL_NAME  # По умолчанию используем основную модель (llama-3.3-70b)
+
+    # 1. Обработка текстовых файлов
     if m.document and m.document.mime_type == "text/plain":
         fi = await bot.get_file(m.document.file_id)
         fb = await bot.download_file(fi.file_path)
         prompt = f"{prompt if prompt else ''}\n\n[File]:\n{fb.read().decode('utf-8', errors='ignore')}"
-    elif m.photo:
-        # У Groq для бесплатного анализа фото нужна другая модель, пока обрабатываем как обычный запрос
-        if not prompt: prompt = "Что на фото?" if l == 'ru' else "Describe the image."
         
+    # 2. Обработка изображений (ЗРЕНИЕ)
+    elif m.photo:
+        # Переключаемся на бесплатную модель со зрением
+        current_model = "llama-3.2-11b-vision-preview"
+        
+        # Скачиваем фото в память
+        photo = m.photo[-1]  # Берем самое лучшее качество
+        fi = await bot.get_file(photo.file_id)
+        fb = await bot.download_file(fi.file_path)
+        
+        # Кодируем картинку в Base64 для передачи в Groq
+        photo_base64 = base64.b64encode(fb.read()).decode('utf-8')
+        
+        if not prompt: 
+            prompt = "Что на фото? Опиши подробно на русском." if l == 'ru' else "Describe the image in detail."
+
     if not prompt: 
         return
 
-    # Записываем реплику пользователя
-    user_history[uid].append({"role": "user", "content": prompt})
+    # 3. Формируем структуру запроса для Groq
+    if photo_base64:
+        # Для фото Groq требует специальный формат контента (текст + url с base64)
+        user_content = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{photo_base64}"
+                }
+            }
+        ]
+    else:
+        # Для обычного текста оставляем стандартную строку
+        user_content = prompt
+
+    # Записываем реплику пользователя в историю (только текст, картинки в историю не пишем, чтобы не забивать память)
+    user_history[uid].append({"role": "user", "content": prompt if not photo_base64 else f"[Фото] {prompt}"})
     
-    # Формируем полный контекст (Системный промпт + история)
-    messages = [{"role": "system", "content": TEXTS[l]['system']}] + user_history[uid]
+    # Собираем контекст: Системный промпт + история (кроме последнего сообщения) + текущее сообщение с фото/текстом
+    messages = [{"role": "system", "content": TEXTS[l]['system']}]
+    for hist in user_history[uid][:-1]:
+        messages.append({"role": hist["role"], "content": hist["content"]})
+        
+    messages.append({"role": "user", "content": user_content})
     
     try:
+        # Запрос к API Groq с динамическим выбором модели
         r = ai_client.chat.completions.create(
-            model=MODEL_NAME,
+            model=current_model,
             messages=messages
         )
         
@@ -134,7 +172,7 @@ async def handle_everything(m: types.Message):
         # Записываем ответ ИИ в историю
         user_history[uid].append({"role": "assistant", "content": response_text})
         
-        # Ограничиваем историю 10 сообщениями
+        # Ограничиваем историю
         if len(user_history[uid]) > 10: 
             user_history[uid] = user_history[uid][-10:]
             
